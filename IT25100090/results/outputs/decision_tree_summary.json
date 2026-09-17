@@ -1,0 +1,22 @@
+{
+  "student_id": "IT25100090",
+  "student_name": "Hettiarachchi H. C. N. G.",
+  "model": "Decision Tree",
+  "random_state": 42,
+  "best_parameters": {
+    "model__class_weight": "balanced",
+    "model__criterion": "entropy",
+    "model__max_depth": 20,
+    "model__min_samples_split": 2
+  },
+  "metrics": {
+    "train_accuracy": 0.9963525835866262,
+    "test_accuracy": 0.2621359223300971,
+    "train_test_accuracy_gap": 0.7342166612565291,
+    "macro_precision": 0.15207420737575156,
+    "macro_recall": 0.15348601234434134,
+    "macro_f1": 0.1522624581669252,
+    "weighted_f1": 0.25650738217467,
+    "best_cv_macro_f1": 0.1771876097985638
+  }
+}
