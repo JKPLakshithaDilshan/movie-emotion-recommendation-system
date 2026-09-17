@@ -1,0 +1,22 @@
+{
+  "student_id": "IT25100111",
+  "student_name": "Chandrasekara C. M. T. D.",
+  "model": "Random Forest",
+  "random_state": 42,
+  "best_parameters": {
+    "model__class_weight": "balanced",
+    "model__max_depth": 40,
+    "model__max_features": "sqrt",
+    "model__n_estimators": 300
+  },
+  "metrics": {
+    "train_accuracy": 0.993920972644377,
+    "test_accuracy": 0.279126213592233,
+    "train_test_accuracy_gap": 0.714794759052144,
+    "macro_precision": 0.16793058094176744,
+    "macro_recall": 0.1688108781894459,
+    "macro_f1": 0.1676663774542884,
+    "weighted_f1": 0.27509908833252017,
+    "best_cv_macro_f1": 0.22959907698567766
+  }
+}
