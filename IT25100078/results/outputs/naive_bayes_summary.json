@@ -1,0 +1,24 @@
+{
+  "student_id": "IT25100078",
+  "student_name": "Thujikoshan Y.",
+  "model": "Multinomial Naive Bayes",
+  "random_state": 42,
+  "best_parameters": {
+    "model__alpha": 0.1,
+    "model__fit_prior": false,
+    "preprocess__text__tfidf__ngram_range": [
+      1,
+      1
+    ],
+    "select__k": 1500
+  },
+  "metrics": {
+    "train_accuracy": 0.8553191489361702,
+    "test_accuracy": 0.3155339805825243,
+    "macro_precision": 0.23775005966626997,
+    "macro_recall": 0.23990017982363596,
+    "macro_f1": 0.2361993887964151,
+    "weighted_f1": 0.3274796823352568,
+    "best_cv_macro_f1": 0.2651150664553938
+  }
+}
