@@ -1,0 +1,24 @@
+{
+  "student_id": "IT25100083",
+  "student_name": "Unawatuna H. M. I. D.",
+  "model": "Linear Support Vector Machine",
+  "random_state": 42,
+  "best_parameters": {
+    "model__C": 0.1,
+    "model__class_weight": "balanced",
+    "preprocess__text__tfidf__ngram_range": [
+      1,
+      1
+    ],
+    "select__k": 1500
+  },
+  "metrics": {
+    "train_accuracy": 0.8091185410334346,
+    "test_accuracy": 0.3640776699029126,
+    "macro_precision": 0.259205990825449,
+    "macro_recall": 0.25115799958560725,
+    "macro_f1": 0.2523229910137368,
+    "weighted_f1": 0.3660734955469141,
+    "best_cv_macro_f1": 0.262339516260755
+  }
+}
