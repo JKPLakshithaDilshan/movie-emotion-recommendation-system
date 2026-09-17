@@ -1,0 +1,591 @@
+from pathlib import Path
+import nbformat as nbf
+
+OUT = Path("IT25100149/IT25100149_mlp_classifier.ipynb")
+nb = nbf.v4.new_notebook()
+cells = []
+
+def md(text): cells.append(nbf.v4.new_markdown_cell(text.strip()))
+def code(text): cells.append(nbf.v4.new_code_cell(text.strip()))
+
+md(r'''# IT25100149 – Multi-Layer Perceptron Neural Network
+
+**Student:** Rajapaksha P. A. D. S.  
+**IT number:** IT25100149  
+**Project:** Emotion-Aware Movie Recommendation System  
+**Primary preprocessing responsibility:** Normalization and scaling  
+**Assigned model:** Multi-Layer Perceptron Neural Network  
+
+This notebook independently demonstrates missing-data handling, categorical encoding, outlier treatment, scaling, feature engineering, feature selection, dimensionality reduction, EDA, leakage-safe model tuning, cross-validation, and final evaluation.''')
+
+md(r'''## 1. Reproducibility and imports
+
+Random state 42 is used throughout. All learned preprocessing steps used for modelling are fitted only on training folds through a scikit-learn pipeline.''')
+
+code(r'''from pathlib import Path
+import json
+import warnings
+
+import cloudpickle
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.impute import SimpleImputer
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+)
+from sklearn.model_selection import (
+    GridSearchCV,
+    StratifiedKFold,
+    cross_validate,
+    train_test_split,
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder, StandardScaler
+
+warnings.filterwarnings("ignore")
+RANDOM_STATE = 42
+np.random.seed(RANDOM_STATE)
+sns.set_theme(style="whitegrid", context="notebook")
+
+PROJECT_ROOT = Path.cwd()
+if not (PROJECT_ROOT / "data").exists():
+    PROJECT_ROOT = PROJECT_ROOT.parent
+if not (PROJECT_ROOT / "data").exists():
+    raise FileNotFoundError("Could not locate the repository root containing the data directory.")
+DATA_PATH = PROJECT_ROOT / "data/processed/modelling_dataset_7class.csv"
+MEMBER_DIR = PROJECT_ROOT / "IT25100149"
+EDA_DIR = MEMBER_DIR / "results/eda_visualizations"
+MODEL_FIG_DIR = MEMBER_DIR / "results/model_visualizations"
+OUTPUT_DIR = MEMBER_DIR / "results/outputs"
+LOG_DIR = MEMBER_DIR / "results/logs"
+for directory in [EDA_DIR, MODEL_FIG_DIR, OUTPUT_DIR, LOG_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
+
+print("Random state:", RANDOM_STATE)
+print("Dataset path:", DATA_PATH)''')
+
+md(r'''## 2. Load and understand the assigned dataset
+
+The modelling unit is one unique movie description. The target is one of seven emotions. The `surprise` class remains in the full EDA dataset but is excluded here because it has only three independent descriptions, which is insufficient for reliable stratified validation.''')
+
+code(r'''df = pd.read_csv(DATA_PATH)
+print("Shape:", df.shape)
+print("Duplicate descriptions:", int(df["Description"].duplicated().sum()))
+display(df.head(3))
+display(df.dtypes.to_frame("dtype"))''')
+
+md(r'''## 3. Missing-data handling
+
+Missing values can cause vectorizers, encoders, scalers, and models to fail or silently lose records. The audit covers literal nulls, empty strings, and unavailable genre lists. Empty genre information is represented by the explicit category `unknown_genre`, preserving the observation instead of deleting it.
+
+For leakage prevention, the modelling pipeline also contains `SimpleImputer`: most-frequent imputation for categorical inputs and median imputation for numerical inputs. These statistics are learned from training folds only.''')
+
+code(r'''blank_counts = {}
+for column in df.select_dtypes(include=["object", "string"]).columns:
+    blank_counts[column] = int(df[column].astype("string").str.strip().eq("").sum())
+
+missing_audit = pd.DataFrame({
+    "missing_count": df.isna().sum(),
+    "blank_count": pd.Series(blank_counts),
+}).fillna(0).astype(int)
+
+print("Total literal missing values:", int(df.isna().sum().sum()))
+print("Total blank strings:", int(missing_audit["blank_count"].sum()))
+print("Unknown-genre rows:", int(df["genres_text"].eq("unknown_genre").sum()))
+display(missing_audit)
+
+# Independent handling demonstration
+demo_missing = df[["mean_rating", "genres_text"]].copy()
+demo_missing.loc[demo_missing.index[0], "mean_rating"] = np.nan
+demo_missing.loc[demo_missing.index[1], "genres_text"] = np.nan
+
+numeric_imputer_demo = SimpleImputer(strategy="median")
+category_imputer_demo = SimpleImputer(strategy="most_frequent")
+demo_missing[["mean_rating"]] = numeric_imputer_demo.fit_transform(demo_missing[["mean_rating"]])
+demo_missing["genres_text"] = category_imputer_demo.fit_transform(demo_missing[["genres_text"]]).ravel()
+print("Demonstration missing values after imputation:", int(demo_missing.isna().sum().sum()))''')
+
+md(r'''## 4. Exploratory data analysis
+
+All figures are saved in the student's own results folder. Each visualization is followed by an interpretation and its influence on modelling.''')
+
+md('''### EDA 1 — Most frequent description terms''')
+code(r'''unigram_vectorizer = CountVectorizer(stop_words="english", min_df=2, ngram_range=(1, 1))
+unigram_matrix = unigram_vectorizer.fit_transform(df["Description"])
+unigram_counts = np.asarray(unigram_matrix.sum(axis=0)).ravel()
+top_unigrams = pd.Series(
+    unigram_counts,
+    index=unigram_vectorizer.get_feature_names_out(),
+).nlargest(20).sort_values()
+
+fig, ax = plt.subplots(figsize=(10, 7))
+top_unigrams.plot(kind="barh", color="#2563eb", ax=ax)
+ax.set_title("Twenty Most Frequent Description Terms")
+ax.set_xlabel("Corpus frequency")
+ax.set_ylabel("Term")
+fig.tight_layout()
+fig.savefig(EDA_DIR / "01_most_frequent_terms.png", dpi=300, bbox_inches="tight")
+plt.show()
+display(top_unigrams.sort_values(ascending=False).to_frame("frequency"))''')
+md(r'''**Interpretation:** Common terms describe broad movie concepts and occur across several emotions. Frequency alone is insufficient, so TF-IDF down-weights globally common words and emphasizes more discriminative terms.''')
+
+md('''### EDA 2 — Most frequent description bigrams''')
+code(r'''bigram_vectorizer = CountVectorizer(stop_words="english", min_df=2, ngram_range=(2, 2))
+bigram_matrix = bigram_vectorizer.fit_transform(df["Description"])
+bigram_counts = np.asarray(bigram_matrix.sum(axis=0)).ravel()
+top_bigrams = pd.Series(
+    bigram_counts,
+    index=bigram_vectorizer.get_feature_names_out(),
+).nlargest(20).sort_values()
+
+fig, ax = plt.subplots(figsize=(10, 7))
+top_bigrams.plot(kind="barh", color="#14b8a6", ax=ax)
+ax.set_title("Twenty Most Frequent Description Bigrams")
+ax.set_xlabel("Corpus frequency")
+ax.set_ylabel("Bigram")
+fig.tight_layout()
+fig.savefig(EDA_DIR / "02_most_frequent_bigrams.png", dpi=300, bbox_inches="tight")
+plt.show()''')
+md(r'''**Interpretation:** Bigrams retain short contextual phrases that unigrams lose. Their lower frequencies justify comparing combined unigram–bigram TF-IDF with careful minimum-frequency filtering.''')
+
+md('''### EDA 3 — Frequent terms by emotion''')
+code(r'''emotion_term_rows = []
+for emotion, group in df.groupby("emotion"):
+    vectorizer = CountVectorizer(stop_words="english", min_df=2, max_features=1000)
+    matrix = vectorizer.fit_transform(group["Description"])
+    counts = np.asarray(matrix.sum(axis=0)).ravel()
+    terms = vectorizer.get_feature_names_out()
+    for position in np.argsort(counts)[-5:][::-1]:
+        emotion_term_rows.append({
+            "emotion": emotion,
+            "term": terms[position],
+            "frequency": int(counts[position]),
+        })
+
+emotion_terms = pd.DataFrame(emotion_term_rows)
+fig, ax = plt.subplots(figsize=(13, 7))
+sns.barplot(data=emotion_terms, x="emotion", y="frequency", hue="term", dodge=True, ax=ax)
+ax.set_title("Five Frequent Terms within Each Emotion")
+ax.set_xlabel("Emotion")
+ax.set_ylabel("Within-emotion frequency")
+ax.tick_params(axis="x", rotation=30)
+ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", ncol=2, fontsize=8)
+fig.tight_layout()
+fig.savefig(EDA_DIR / "03_frequent_terms_by_emotion.png", dpi=300, bbox_inches="tight")
+plt.show()''')
+md(r'''**Interpretation:** Some terms recur within particular emotion classes, but substantial vocabulary overlap remains. This supports supervised text modelling while explaining why the seven-class task is challenging.''')
+
+md(r'''### EDA 4 — TruncatedSVD explained variance
+
+The fourth visualization appears in the dimensionality-reduction section after the training split. It shows how much variation is retained as dense components are added. It is fitted on training descriptions only to avoid leakage.''')
+
+md(r'''## 5. Feature engineering
+
+The notebook uses description text, genre category, rating summaries, description lengths, genre count, rating range, and log-transformed review-popularity measures. These features represent semantic content, categorical context, quality, complexity, and popularity.''')
+
+code(r'''numeric_features = [
+    "mean_rating",
+    "median_rating",
+    "genre_count",
+    "description_word_count",
+    "description_character_count",
+    "rating_range",
+    "log_review_count",
+    "log_unique_review_count",
+]
+categorical_features = ["genres_text"]
+text_feature = "Description"
+target = "emotion"
+
+model_columns = [text_feature] + categorical_features + numeric_features
+X = df[model_columns].copy()
+y = df[target].copy()
+
+feature_summary = df[numeric_features].describe().T
+display(feature_summary)
+print("Input columns:", model_columns)''')
+
+md(r'''## 6. Outlier detection and treatment
+
+The IQR rule flags observations below $Q_1-1.5(IQR)$ or above $Q_3+1.5(IQR)$. Deleting valid movies could further damage minority classes, so numeric outliers are winsorized (clipped) rather than removed. The custom transformer learns limits only from training data.''')
+
+code(r'''outlier_rows = []
+for column in numeric_features:
+    q1 = df[column].quantile(0.25)
+    q3 = df[column].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    count = int(((df[column] < lower) | (df[column] > upper)).sum())
+    outlier_rows.append({"feature": column, "lower_bound": lower, "upper_bound": upper, "outlier_count": count})
+
+outlier_table = pd.DataFrame(outlier_rows).sort_values("outlier_count", ascending=False)
+display(outlier_table)
+
+class IQRClipper(BaseEstimator, TransformerMixin):
+    def __init__(self, factor=1.5):
+        self.factor = factor
+
+    def fit(self, X, y=None):
+        values = np.asarray(X, dtype=float)
+        self.q1_ = np.nanquantile(values, 0.25, axis=0)
+        self.q3_ = np.nanquantile(values, 0.75, axis=0)
+        iqr = self.q3_ - self.q1_
+        self.lower_ = self.q1_ - self.factor * iqr
+        self.upper_ = self.q3_ + self.factor * iqr
+        return self
+
+    def transform(self, X):
+        values = np.asarray(X, dtype=float)
+        return np.clip(values, self.lower_, self.upper_)''')
+
+md(r'''## 7. Categorical encoding and target encoding
+
+`genres_text` is encoded with `OneHotEncoder(handle_unknown='ignore')`, allowing unseen test categories without failure. `LabelEncoder` is demonstrated for the target, although scikit-learn's MLP can train directly on string labels.''')
+
+code(r'''label_encoder = LabelEncoder()
+encoded_target = label_encoder.fit_transform(y)
+target_mapping = pd.DataFrame({
+    "emotion": label_encoder.classes_,
+    "encoded_value": range(len(label_encoder.classes_)),
+})
+display(target_mapping)
+
+genre_encoder_demo = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+genre_matrix_demo = genre_encoder_demo.fit_transform(df[["genres_text"]])
+print("Genre encoding shape:", genre_matrix_demo.shape)
+print("Number of encoded genre categories:", len(genre_encoder_demo.categories_[0]))''')
+
+md(r'''## 8. Normalization and scaling — primary specialization
+
+StandardScaler is demonstrated below to verify approximately zero mean and unit variance. In the final pipeline, MinMaxScaler first keeps combined pre-SVD features non-negative for chi-squared selection. After TruncatedSVD creates dense components, StandardScaler standardizes those components for neural-network optimization. Every scaler is fitted using training folds only.''')
+
+code(r'''scaler_demo = StandardScaler()
+scaled_demo = scaler_demo.fit_transform(df[numeric_features])
+scaled_summary = pd.DataFrame(scaled_demo, columns=numeric_features).agg(["mean", "std"]).T
+display(scaled_summary.round(4))''')
+
+md(r'''## 9. Stratified train/test split
+
+The 20% final test set remains untouched during tuning. Stratification preserves the seven-class proportions.''')
+
+code(r'''X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    stratify=y,
+    random_state=RANDOM_STATE,
+)
+
+split_summary = pd.concat([
+    y_train.value_counts().rename("train_count"),
+    y_test.value_counts().rename("test_count"),
+], axis=1).fillna(0).astype(int)
+display(split_summary)
+print("Training shape:", X_train.shape)
+print("Test shape:", X_test.shape)''')
+
+md(r'''## 10. Leakage-safe preprocessing pipeline
+
+- Description: TF-IDF unigrams and bigrams.
+- Genre: most-frequent imputation and one-hot encoding.
+- Numeric: median imputation, IQR clipping, and min-max scaling.
+- Combined features: chi-squared selection followed by TruncatedSVD.
+- Dense components: StandardScaler for stable neural-network optimization.
+- Classifier: Multi-Layer Perceptron with early stopping.
+
+Every learned step is nested in `GridSearchCV`, so each validation fold learns transformations only from its training portion.''')
+
+code(r'''text_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="constant", fill_value="missing_description")),
+    ("flatten", __import__("sklearn").preprocessing.FunctionTransformer(lambda x: np.asarray(x).ravel(), validate=False)),
+    ("tfidf", TfidfVectorizer(lowercase=True, stop_words="english", min_df=2, max_df=0.95, ngram_range=(1, 2), sublinear_tf=True)),
+])
+
+categorical_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="most_frequent")),
+    ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=True)),
+])
+
+numeric_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("outliers", IQRClipper(factor=1.5)),
+    # Min-max scaling keeps values non-negative, which is required
+    # by the downstream chi-squared feature selector.
+    ("scaler", MinMaxScaler()),
+])
+
+preprocessor = ColumnTransformer([
+    ("text", text_pipeline, [text_feature]),
+    ("genre", categorical_pipeline, categorical_features),
+    ("numeric", numeric_pipeline, numeric_features),
+])
+
+pipeline = Pipeline([
+    ("preprocess", preprocessor),
+    ("select", SelectKBest(score_func=chi2, k=1500)),
+    ("svd", TruncatedSVD(n_components=100, random_state=RANDOM_STATE)),
+    ("dense_scaler", StandardScaler()),
+    ("model", MLPClassifier(
+        random_state=RANDOM_STATE,
+        max_iter=300,
+        early_stopping=True,
+        validation_fraction=0.15,
+        n_iter_no_change=15,
+    )),
+])
+
+print(pipeline)''')
+
+md(r'''## 11. Feature selection
+
+Chi-squared selection retains 1,500 non-negative features with the strongest target association before dimensionality reduction. It reduces noise and computational cost and is fitted inside every cross-validation fold.''')
+
+md(r'''## 12. Dimensionality reduction
+
+TruncatedSVD compresses high-dimensional sparse text and supporting features into 100 dense latent components suitable for the MLP. This avoids sending the complete sparse vocabulary into a dense neural network. The plot is the fourth EDA visualization and is fitted on training descriptions only; the final pipeline independently fits SVD within every training fold.''')
+
+code(r'''svd_tfidf = TfidfVectorizer(
+    lowercase=True,
+    stop_words="english",
+    min_df=2,
+    max_df=0.95,
+    ngram_range=(1, 2),
+    max_features=5000,
+    sublinear_tf=True,
+)
+train_tfidf = svd_tfidf.fit_transform(X_train[text_feature])
+svd = TruncatedSVD(n_components=100, random_state=RANDOM_STATE)
+train_svd = svd.fit_transform(train_tfidf)
+cum_variance = np.cumsum(svd.explained_variance_ratio_)
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(range(1, len(cum_variance) + 1), cum_variance, color="#7c3aed")
+ax.set_title("TruncatedSVD Cumulative Explained Variance")
+ax.set_xlabel("Number of components")
+ax.set_ylabel("Cumulative explained variance")
+fig.tight_layout()
+fig.savefig(EDA_DIR / "04_svd_explained_variance.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+print("Original training TF-IDF shape:", train_tfidf.shape)
+print("Reduced training shape:", train_svd.shape)
+print("Variance explained by 100 components:", round(float(cum_variance[-1]), 4))''')
+
+md(r'''## 13. Hyperparameter tuning and model varieties
+
+The search compares a single hidden layer `(100,)` with two hidden layers `(128, 64)`, ReLU with tanh activation, two L2-regularization strengths, and two initial learning rates. This produces 16 neural-network varieties and 80 total fits under five-fold validation. Early stopping is enabled for every model, and macro F1 is optimized because the classes are imbalanced.''')
+
+code(r'''cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
+
+param_grid = {
+    "model__hidden_layer_sizes": [(100,), (128, 64)],
+    "model__activation": ["relu", "tanh"],
+    "model__alpha": [0.0001, 0.001],
+    "model__learning_rate_init": [0.001, 0.01],
+}
+
+grid_search = GridSearchCV(
+    estimator=pipeline,
+    param_grid=param_grid,
+    scoring="f1_macro",
+    cv=cv,
+    n_jobs=-1,
+    verbose=1,
+    return_train_score=True,
+    refit=True,
+)
+
+grid_search.fit(X_train, y_train)
+print("Candidates trained:", len(grid_search.cv_results_["params"]))
+print("Best CV macro F1:", round(grid_search.best_score_, 4))
+print("Best parameters:")
+print(json.dumps(grid_search.best_params_, indent=2, default=str))''')
+
+md(r'''## 14. Compare model varieties''')
+
+code(r'''cv_results = pd.DataFrame(grid_search.cv_results_)
+comparison_columns = [
+    "param_model__hidden_layer_sizes",
+    "param_model__activation",
+    "param_model__alpha",
+    "param_model__learning_rate_init",
+    "mean_train_score",
+    "mean_test_score",
+    "std_test_score",
+    "rank_test_score",
+]
+model_comparison = (
+    cv_results[comparison_columns]
+    .sort_values("rank_test_score")
+    .reset_index(drop=True)
+)
+display(model_comparison.head(15))
+model_comparison.to_csv(OUTPUT_DIR / "mlp_model_comparison.csv", index=False)''')
+
+md(r'''## 15. Final untouched-test evaluation''')
+
+code(r'''best_model = grid_search.best_estimator_
+y_train_pred = best_model.predict(X_train)
+y_test_pred = best_model.predict(X_test)
+
+metrics = {
+    "train_accuracy": accuracy_score(y_train, y_train_pred),
+    "test_accuracy": accuracy_score(y_test, y_test_pred),
+    "train_test_accuracy_gap": accuracy_score(y_train, y_train_pred) - accuracy_score(y_test, y_test_pred),
+    "macro_precision": precision_score(y_test, y_test_pred, average="macro", zero_division=0),
+    "macro_recall": recall_score(y_test, y_test_pred, average="macro", zero_division=0),
+    "macro_f1": f1_score(y_test, y_test_pred, average="macro", zero_division=0),
+    "weighted_f1": f1_score(y_test, y_test_pred, average="weighted", zero_division=0),
+    "best_cv_macro_f1": grid_search.best_score_,
+}
+
+metrics_df = pd.DataFrame([metrics]).T.rename(columns={0: "score"})
+display(metrics_df.round(4))
+metrics_df.to_csv(OUTPUT_DIR / "mlp_metrics.csv")
+
+report = classification_report(y_test, y_test_pred, output_dict=True, zero_division=0)
+report_df = pd.DataFrame(report).T
+display(report_df.round(4))
+report_df.to_csv(OUTPUT_DIR / "mlp_classification_report.csv")''')
+
+md(r'''## 16. Confusion matrix''')
+
+code(r'''labels = sorted(y.unique())
+fig, ax = plt.subplots(figsize=(10, 8))
+ConfusionMatrixDisplay.from_predictions(
+    y_test,
+    y_test_pred,
+    labels=labels,
+    display_labels=labels,
+    cmap="Blues",
+    xticks_rotation=35,
+    ax=ax,
+    colorbar=False,
+)
+ax.set_title("Multi-Layer Perceptron Confusion Matrix")
+fig.tight_layout()
+fig.savefig(MODEL_FIG_DIR / "mlp_confusion_matrix.png", dpi=300, bbox_inches="tight")
+plt.show()''')
+
+md(r'''### Neural-network training-loss curve
+
+The loss curve shows optimization progress for the selected MLP. Early stopping monitors an internal validation portion and stops training when improvement has stalled, limiting unnecessary computation and overfitting.''')
+
+code(r'''mlp = best_model.named_steps["model"]
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(range(1, len(mlp.loss_curve_) + 1), mlp.loss_curve_, color="#dc2626")
+ax.set_title("MLP Training-Loss Curve")
+ax.set_xlabel("Training iteration")
+ax.set_ylabel("Loss")
+fig.tight_layout()
+fig.savefig(MODEL_FIG_DIR / "mlp_training_loss.png", dpi=300, bbox_inches="tight")
+plt.show()
+print("Iterations completed:", mlp.n_iter_)
+print("Final training loss:", round(float(mlp.loss_), 6))
+print("Early stopping enabled:", mlp.early_stopping)''')
+
+md(r'''## 17. Five-fold cross-validation reliability
+
+The tuned pipeline is evaluated using multiple metrics over the training data. Mean and standard deviation show expected generalization and stability.''')
+
+code(r'''scoring = {
+    "accuracy": "accuracy",
+    "macro_precision": "precision_macro",
+    "macro_recall": "recall_macro",
+    "macro_f1": "f1_macro",
+    "weighted_f1": "f1_weighted",
+}
+cv_scores = cross_validate(best_model, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+cv_summary = pd.DataFrame({
+    metric.replace("test_", ""): {
+        "mean": np.mean(values),
+        "std": np.std(values),
+    }
+    for metric, values in cv_scores.items()
+    if metric.startswith("test_")
+}).T
+display(cv_summary.round(4))
+cv_summary.to_csv(OUTPUT_DIR / "mlp_cross_validation.csv")''')
+
+md(r'''## 18. Save predictions and trained model''')
+
+code(r'''predictions = pd.DataFrame({
+    "actual_emotion": y_test.reset_index(drop=True),
+    "predicted_emotion": pd.Series(y_test_pred),
+})
+predictions.to_csv(OUTPUT_DIR / "mlp_test_predictions.csv", index=False)
+model_path = OUTPUT_DIR / "IT25100149_best_mlp.pkl"
+with open(model_path, "wb") as model_file:
+    cloudpickle.dump(best_model, model_file)
+
+summary = {
+    "student_id": "IT25100149",
+    "student_name": "Rajapaksha P. A. D. S.",
+    "model": "Multi-Layer Perceptron",
+    "random_state": RANDOM_STATE,
+    "best_parameters": grid_search.best_params_,
+    "metrics": {key: float(value) for key, value in metrics.items()},
+}
+with open(OUTPUT_DIR / "mlp_summary.json", "w", encoding="utf-8") as file:
+    json.dump(summary, file, indent=2, default=str)
+
+print("Saved model and outputs to:", OUTPUT_DIR)''')
+
+md(r'''## 19. Conclusion, limitations, and improvements
+
+**Model selection:** The final MLP variety is selected using five-fold cross-validated macro F1, not test-set performance. This protects the test set and gives equal importance to minority classes.
+
+**Interpretation:** Training and test accuracy, the loss curve, and early-stopping behavior are considered together. A large accuracy gap indicates overfitting, while weak training and test scores may indicate underfitting. Macro F1 and per-class results expose minority-class performance, especially for `disgust`.
+
+**Potential limitations:**
+
+- Class imbalance, especially the small disgust class.
+- Only 2,057 independent descriptions.
+- Emotion labels may be subjective.
+- Descriptions may contain incomplete summaries.
+- Genre combinations encoded as categories can be sparse.
+- Neural-network decisions are less directly interpretable than linear-model coefficients.
+- Early stopping uses part of each training fold as internal validation, reducing effective training size.
+- The excluded surprise class cannot be predicted by the supervised model.
+
+**Possible improvements:**
+
+- Collect more independently labelled descriptions for minority emotions.
+- Compare multilabel genre encoding against the current combined-genre representation.
+- Tune feature-selection and SVD dimensions with a larger but controlled search.
+- Compare class-aware sampling, calibrated linear models, and transformer embeddings.
+- Conduct fairness/error analysis across genres.
+- Add SHAP or permutation-based explanations for dense components.
+
+## 20. Individual reflection
+
+This implementation demonstrates why scaling is essential for neural-network optimization. Non-negative scaling supports chi-squared selection, while post-SVD standardization places dense components on comparable ranges. Architecture, activation, regularization, learning rate, and early stopping jointly control convergence and overfitting.
+
+## AI tool usage declaration
+
+Generative AI assistance was used for code structuring, debugging suggestions, documentation organization, and explanation refinement. All code must be executed, checked, modified where necessary, and understood by the student before submission. The student remains responsible for every result and interpretation.''')
+
+nb["cells"] = cells
+nb["metadata"] = {
+    "kernelspec": {"display_name": "Python (Movie Emotion ML)", "language": "python", "name": "movie-emotion-ml"},
+    "language_info": {"name": "python", "version": "3.14"},
+}
+OUT.parent.mkdir(parents=True, exist_ok=True)
+nbf.write(nb, OUT)
+print(f"Created {OUT} with {len(cells)} cells")
