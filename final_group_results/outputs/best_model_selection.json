@@ -1,0 +1,12 @@
+{
+  "selected_model": "Linear SVM",
+  "student_id": "IT25100083",
+  "selection_metric": "held_out_macro_f1",
+  "test_macro_f1": 0.2523229910137368,
+  "test_accuracy": 0.3640776699029126,
+  "weighted_f1": 0.3660734955469141,
+  "cv_macro_f1": 0.262339516260755,
+  "source_model": "IT25100083/results/outputs/IT25100083_best_linear_svm.pkl",
+  "deployment_model": "models/best_emotion_classifier.pkl",
+  "known_limitation": "Minority-class performance, especially disgust, remains weak."
+}

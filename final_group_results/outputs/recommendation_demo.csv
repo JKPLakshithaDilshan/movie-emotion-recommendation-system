@@ -1,0 +1,11 @@
+movie_name,predicted_emotion,genres_text,mean_rating,review_count,recommendation_score
+The Promise,sadness,drama romance,9.590909090909092,88,0.8515887654665693
+Titanic,sadness,drama romance thriller,9.666666666666666,18,0.8027005277434849
+Brokeback Mountain,sadness,drama romance,9.529411764705882,17,0.7893298452035264
+Moulin Rouge!,sadness,drama music romance,9.833333333333334,6,0.7808943955288397
+Exit,sadness,drama mystery thriller,10.0,3,0.7747783564097883
+Zero,sadness,drama,8.789473684210526,38,0.7553080305558103
+Collateral Beauty,sadness,drama romance,8.8,20,0.7340560501567467
+In the Land of Blood and Honey,sadness,drama romance war,8.666666666666666,24,0.7291776562651402
+Vanilla Sky,sadness,drama mystery romance science_fiction thriller,8.733333333333333,15,0.7187795136738093
+Les Misérables,sadness,crime drama history romance,8.1,60,0.7138422337798506
